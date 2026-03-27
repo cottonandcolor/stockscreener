@@ -4,6 +4,8 @@ import { formatPercent, formatLargeNumber } from "@/lib/formatters";
 import MiniStockCard from "@/components/MiniStockCard";
 import DashboardInsiderTrades from "@/components/DashboardInsiderTrades";
 import DashboardInsiderBuys from "@/components/DashboardInsiderBuys";
+import BuySignalScanner from "@/components/BuySignalScanner";
+import ETFFlows from "@/components/ETFFlows";
 import MarketBreadth from "@/components/MarketBreadth";
 import type { BreadthData } from "@/components/MarketBreadth";
 import Link from "next/link";
@@ -128,7 +130,17 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      {/* Top 10 Insider Buys */}
+      {/* Buy Signal Scanner */}
+      <div className="mb-8">
+        <BuySignalScanner />
+      </div>
+
+      {/* ETF Fund Flows */}
+      <div className="mb-8">
+        <ETFFlows />
+      </div>
+
+      {/* Top 10 Insider Buys — Stocks Under $10 */}
       <div className="mb-8">
         <DashboardInsiderBuys />
       </div>
