@@ -5,6 +5,7 @@ import MiniStockCard from "@/components/MiniStockCard";
 import DashboardInsiderTrades from "@/components/DashboardInsiderTrades";
 import DashboardInsiderBuys from "@/components/DashboardInsiderBuys";
 import BuySignalScanner from "@/components/BuySignalScanner";
+import SellSignalScanner from "@/components/SellSignalScanner";
 import ETFFlows from "@/components/ETFFlows";
 import MarketBreadth from "@/components/MarketBreadth";
 import type { BreadthData } from "@/components/MarketBreadth";
@@ -133,6 +134,11 @@ export default async function DashboardPage() {
       {/* Buy Signal Scanner */}
       <div className="mb-8">
         <BuySignalScanner />
+      </div>
+
+      {/* Sell Signal Scanner */}
+      <div className="mb-8">
+        <SellSignalScanner />
       </div>
 
       {/* ETF Fund Flows */}

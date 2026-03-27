@@ -278,6 +278,89 @@ export async function fetchBuySignals(): Promise<BuySignal[]> {
   return results;
 }
 
+/* ─── Sell Signal Scanner ─── */
+
+export type SellSignal = BuySignal; // same shape, different signal names
+
+export async function fetchSellSignals(): Promise<SellSignal[]> {
+  const cacheKey = "yahoo:sell-signals";
+  const cached = cacheGet<SellSignal[]>(cacheKey);
+  if (cached) return cached;
+
+  const raw = await yf.quote(SYMBOLS, {}, { validateResult: false });
+  const quotes = (Array.isArray(raw) ? raw : [raw]) as Record<string, any>[];
+
+  const results: SellSignal[] = [];
+
+  for (const q of quotes) {
+    const sym = String(q.symbol ?? "");
+    const def = DEF_MAP.get(sym);
+    if (!def) continue;
+
+    const price = safeNum(q.regularMarketPrice);
+    const ma50 = safeNum(q.fiftyDayAverage);
+    const ma200 = safeNum(q.twoHundredDayAverage);
+    const vol = safeNum(q.regularMarketVolume);
+    const avgVol = safeNum(q.averageDailyVolume3Month);
+    const chg = safeNum(q.regularMarketChange);
+    const chgPct = safeNum(q.regularMarketChangePercent);
+    const h52 = safeNum(q.fiftyTwoWeekHigh);
+    const l52 = safeNum(q.fiftyTwoWeekLow);
+
+    if (price <= 0) continue;
+
+    const signals: string[] = [];
+
+    if (ma50 > 0 && ma200 > 0 && price < ma50 && ma50 < ma200) {
+      signals.push("Death Cross");
+    }
+
+    if (ma50 > 0 && price < ma50 && chg < 0) {
+      signals.push("Below 50-Day MA");
+    }
+
+    if (ma200 > 0 && price < ma200 && chg < 0) {
+      signals.push("Below 200-Day MA");
+    }
+
+    if (avgVol > 0 && vol > avgVol * 1.5 && chg < 0) {
+      signals.push("Heavy Selloff");
+    }
+
+    if (l52 > 0 && price <= l52 * 1.05) {
+      signals.push("Near 52W Low");
+    }
+
+    if (h52 > 0 && price <= h52 * 0.8) {
+      signals.push("Down 20%+ from High");
+    }
+
+    if (signals.length === 0) continue;
+
+    results.push({
+      symbol: sym,
+      name: String(q.longName ?? q.shortName ?? def.name),
+      price,
+      change: chg,
+      changePercent: chgPct,
+      marketCap: safeNum(q.marketCap),
+      volume: vol,
+      avgVolume: avgVol,
+      ma50,
+      ma200,
+      high52: h52,
+      low52: l52,
+      signals,
+      strength: signals.length,
+    });
+  }
+
+  results.sort((a, b) => b.strength - a.strength || a.changePercent - b.changePercent);
+
+  cacheSet(cacheKey, results, TTL.QUOTES);
+  return results;
+}
+
 /* ─── ETF Flow Tracker ─── */
 
 export interface ETFFlow {
