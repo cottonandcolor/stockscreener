@@ -727,4 +727,153 @@ export async function fetchMarketNews(count = 30): Promise<NewsArticle[]> {
   cacheSet(cacheKey, trimmed, TTL.QUOTES);
   return trimmed;
 }
+
+/* ─── Max Pain Calculator ─── */
+
+export interface MaxPainStrike {
+  strike: number;
+  callOI: number;
+  putOI: number;
+  callPain: number;
+  putPain: number;
+  totalPain: number;
+}
+
+export interface MaxPainResult {
+  symbol: string;
+  name: string;
+  currentPrice: number;
+  expirationDate: string;
+  expirationDates: string[];
+  maxPainPrice: number;
+  strikes: MaxPainStrike[];
+  totalCallOI: number;
+  totalPutOI: number;
+  putCallRatio: number;
+}
+
+export async function fetchMaxPain(
+  symbol: string,
+  expirationDate?: string
+): Promise<MaxPainResult | null> {
+  const upper = symbol.toUpperCase();
+  const cacheKey = `yahoo:maxpain:${upper}:${expirationDate ?? "default"}`;
+  const cached = cacheGet<MaxPainResult>(cacheKey);
+  if (cached) return cached;
+
+  let requestDate = expirationDate;
+
+  // If no date specified, fetch default first to get expiration list, then pick a good one
+  const initialData = await yf.options(upper, requestDate ? { date: new Date(requestDate) } as any : {}, { validateResult: false }) as any;
+  if (!initialData?.options?.length && !initialData?.expirationDates?.length) return null;
+
+  const allExpDates: string[] = (initialData.expirationDates ?? []).map((d: any) =>
+    d instanceof Date ? d.toISOString().split("T")[0] : String(d).split("T")[0]
+  );
+
+  // Auto-pick: skip today, prefer the nearest Friday expiration >= 3 days out
+  if (!requestDate && allExpDates.length > 0) {
+    const todayStr = new Date().toISOString().split("T")[0];
+    const threeDaysOut = new Date(Date.now() + 3 * 86_400_000).toISOString().split("T")[0];
+    const future = allExpDates.filter((d) => d > todayStr && d >= threeDaysOut);
+    if (future.length > 0) {
+      requestDate = future[0];
+    } else {
+      const anyFuture = allExpDates.filter((d) => d > todayStr);
+      requestDate = anyFuture.length > 0 ? anyFuture[0] : allExpDates[0];
+    }
+  }
+
+  // Re-fetch for the chosen date if different from initial
+  const data = requestDate && requestDate !== allExpDates[0]
+    ? await yf.options(upper, { date: new Date(requestDate) } as any, { validateResult: false }) as any
+    : initialData;
+
+  if (!data?.options?.length) return null;
+
+  const quote = data.quote ?? {};
+  const currentPrice = Number(quote.regularMarketPrice ?? 0);
+  const name = String(quote.longName ?? quote.shortName ?? upper);
+
+  const expirationDates = allExpDates;
+
+  const chain = data.options[0];
+  const calls: any[] = chain?.calls ?? [];
+  const puts: any[] = chain?.puts ?? [];
+  const expDate = chain?.expirationDate instanceof Date
+    ? chain.expirationDate.toISOString().split("T")[0]
+    : String(chain?.expirationDate ?? "").split("T")[0];
+
+  const callMap = new Map<number, number>();
+  const putMap = new Map<number, number>();
+  const allStrikes = new Set<number>();
+
+  for (const c of calls) {
+    const k = Number(c.strike);
+    const oi = Number(c.openInterest ?? 0);
+    callMap.set(k, oi);
+    allStrikes.add(k);
+  }
+  for (const p of puts) {
+    const k = Number(p.strike);
+    const oi = Number(p.openInterest ?? 0);
+    putMap.set(k, oi);
+    allStrikes.add(k);
+  }
+
+  const sortedStrikes = Array.from(allStrikes).sort((a, b) => a - b);
+  if (sortedStrikes.length === 0) return null;
+
+  const strikeResults: MaxPainStrike[] = sortedStrikes.map((s) => {
+    const callOI = callMap.get(s) ?? 0;
+    const putOI = putMap.get(s) ?? 0;
+
+    let callPain = 0;
+    let putPain = 0;
+
+    for (const k of sortedStrikes) {
+      const cOI = callMap.get(k) ?? 0;
+      const pOI = putMap.get(k) ?? 0;
+      if (s > k) callPain += (s - k) * cOI * 100;
+      if (s < k) putPain += (k - s) * pOI * 100;
+    }
+
+    return {
+      strike: s,
+      callOI,
+      putOI,
+      callPain,
+      putPain,
+      totalPain: callPain + putPain,
+    };
+  });
+
+  let minPain = Infinity;
+  let maxPainPrice = sortedStrikes[0];
+  for (const sr of strikeResults) {
+    if (sr.totalPain < minPain) {
+      minPain = sr.totalPain;
+      maxPainPrice = sr.strike;
+    }
+  }
+
+  const totalCallOI = Array.from(callMap.values()).reduce((a, b) => a + b, 0);
+  const totalPutOI = Array.from(putMap.values()).reduce((a, b) => a + b, 0);
+
+  const result: MaxPainResult = {
+    symbol: upper,
+    name,
+    currentPrice,
+    expirationDate: expDate,
+    expirationDates,
+    maxPainPrice,
+    strikes: strikeResults,
+    totalCallOI,
+    totalPutOI,
+    putCallRatio: totalCallOI > 0 ? +(totalPutOI / totalCallOI).toFixed(2) : 0,
+  };
+
+  cacheSet(cacheKey, result, TTL.QUOTES);
+  return result;
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
