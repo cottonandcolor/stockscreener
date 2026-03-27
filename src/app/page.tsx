@@ -9,6 +9,7 @@ import SellSignalScanner from "@/components/SellSignalScanner";
 import ETFFlows from "@/components/ETFFlows";
 import ETFSignals from "@/components/ETFSignals";
 import MarketBreadth from "@/components/MarketBreadth";
+import MarketNews from "@/components/MarketNews";
 import type { BreadthData } from "@/components/MarketBreadth";
 import Link from "next/link";
 import type { Stock } from "@/lib/stockData";
@@ -119,6 +120,11 @@ export default async function DashboardPage() {
             ))}
           </div>
         </Section>
+      </div>
+
+      {/* Market News */}
+      <div className="mb-8">
+        <MarketNews />
       </div>
 
       {/* Market Breadth Trends */}

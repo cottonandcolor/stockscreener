@@ -653,4 +653,78 @@ export async function fetchDCASimulation(input: DCAInput): Promise<DCAResult | n
     },
   };
 }
+
+/* ─── Market News ─── */
+
+export interface NewsArticle {
+  uuid: string;
+  title: string;
+  publisher: string;
+  link: string;
+  publishedAt: string;
+  thumbnail: string | null;
+  relatedTickers: string[];
+  type: string;
+}
+
+const NEWS_QUERIES = [
+  "stock market today",
+  "S&P 500",
+  "Federal Reserve",
+  "earnings",
+  "economy",
+];
+
+export async function fetchMarketNews(count = 30): Promise<NewsArticle[]> {
+  const cacheKey = "yahoo:market-news";
+  const cached = cacheGet<NewsArticle[]>(cacheKey);
+  if (cached) return cached;
+
+  const seen = new Set<string>();
+  const articles: NewsArticle[] = [];
+
+  for (const query of NEWS_QUERIES) {
+    try {
+      const result = await yf.search(query, {
+        newsCount: 10,
+        quotesCount: 0,
+      }) as any;
+
+      const news: any[] = result?.news ?? [];
+      for (const n of news) {
+        if (seen.has(n.uuid)) continue;
+        seen.add(n.uuid);
+
+        const thumb =
+          n.thumbnail?.resolutions?.[0]?.url ?? null;
+
+        articles.push({
+          uuid: String(n.uuid ?? ""),
+          title: String(n.title ?? ""),
+          publisher: String(n.publisher ?? ""),
+          link: String(n.link ?? ""),
+          publishedAt:
+            n.providerPublishTime instanceof Date
+              ? n.providerPublishTime.toISOString()
+              : typeof n.providerPublishTime === "number"
+                ? new Date(n.providerPublishTime * 1000).toISOString()
+                : String(n.providerPublishTime ?? ""),
+          thumbnail: thumb ? String(thumb) : null,
+          relatedTickers: Array.isArray(n.relatedTickers) ? n.relatedTickers.map(String) : [],
+          type: String(n.type ?? ""),
+        });
+      }
+    } catch {
+      // skip failed query
+    }
+  }
+
+  articles.sort(
+    (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+  );
+
+  const trimmed = articles.slice(0, count);
+  cacheSet(cacheKey, trimmed, TTL.QUOTES);
+  return trimmed;
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
