@@ -23,6 +23,10 @@
 # misc
 .DS_Store
 *.pem
+*.iml
+
+# IDE
+.idea/
 
 # debug
 npm-debug.log*
