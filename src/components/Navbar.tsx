@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Search, Star, TrendingUp } from "lucide-react";
+import { BarChart3, Search, Star, TrendingUp, Calculator } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: TrendingUp },
   { href: "/screener", label: "Screener", icon: Search },
+  { href: "/dca", label: "DCA Calculator", icon: Calculator },
   { href: "/watchlist", label: "Watchlist", icon: Star },
 ];
 

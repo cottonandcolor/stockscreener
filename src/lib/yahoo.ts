@@ -498,4 +498,159 @@ export async function fetchETFFlows(): Promise<ETFFlow[]> {
   cacheSet(cacheKey, flows, TTL.QUOTES);
   return flows;
 }
+
+/* ─── DCA Simulator ─── */
+
+export interface DCAInput {
+  symbol: string;
+  totalAmount: number;
+  months: number;
+  frequency: "weekly" | "biweekly" | "monthly";
+}
+
+export interface DCAPurchase {
+  date: string;
+  price: number;
+  invested: number;
+  sharesBought: number;
+  totalShares: number;
+  totalInvested: number;
+  marketValue: number;
+  gainLoss: number;
+  gainLossPercent: number;
+}
+
+export interface DCAResult {
+  symbol: string;
+  name: string;
+  currentPrice: number;
+  totalAmount: number;
+  months: number;
+  frequency: string;
+  investmentPerPeriod: number;
+  numberOfPurchases: number;
+  purchases: DCAPurchase[];
+  summary: {
+    totalInvested: number;
+    totalShares: number;
+    avgCostBasis: number;
+    currentValue: number;
+    totalReturn: number;
+    totalReturnPercent: number;
+    lumpSumShares: number;
+    lumpSumValue: number;
+    lumpSumReturn: number;
+    lumpSumReturnPercent: number;
+  };
+}
+
+export async function fetchDCASimulation(input: DCAInput): Promise<DCAResult | null> {
+  const { symbol, totalAmount, months, frequency } = input;
+  const upper = symbol.toUpperCase();
+
+  const periodDays = frequency === "weekly" ? 7 : frequency === "biweekly" ? 14 : 30;
+  const totalDays = months * 30;
+  const numberOfPurchases = Math.max(1, Math.floor(totalDays / periodDays));
+  const investmentPerPeriod = +(totalAmount / numberOfPurchases).toFixed(2);
+
+  const startDate = new Date(Date.now() - months * 30 * 24 * 60 * 60 * 1000);
+  const today = new Date();
+
+  const chart = await yf.chart(upper, {
+    period1: startDate.toISOString().split("T")[0],
+    period2: today.toISOString().split("T")[0],
+    interval: "1d",
+  }) as any;
+
+  const quotes: { date: Date; close: number }[] = ((chart?.quotes ?? []) as any[])
+    .filter((q: any) => q.close && q.close > 0)
+    .map((q: any) => ({
+      date: q.date instanceof Date ? q.date : new Date(String(q.date)),
+      close: Number(q.close),
+    }));
+
+  if (quotes.length < 2) return null;
+
+  const quoteResult = await yf.quote(upper, {}, { validateResult: false }) as any;
+  const currentPrice = Number(
+    Array.isArray(quoteResult)
+      ? quoteResult[0]?.regularMarketPrice ?? 0
+      : quoteResult?.regularMarketPrice ?? 0
+  );
+  const name = String(
+    Array.isArray(quoteResult)
+      ? quoteResult[0]?.longName ?? quoteResult[0]?.shortName ?? upper
+      : quoteResult?.longName ?? quoteResult?.shortName ?? upper
+  );
+
+  const lumpSumPrice = quotes[0].close;
+  const lumpSumShares = totalAmount / lumpSumPrice;
+
+  let totalShares = 0;
+  let totalInvested = 0;
+  let purchaseIndex = 0;
+  const purchases: DCAPurchase[] = [];
+  let nextPurchaseDate = new Date(quotes[0].date);
+
+  for (const q of quotes) {
+    if (purchaseIndex >= numberOfPurchases) break;
+    if (q.date < nextPurchaseDate && purchaseIndex > 0) continue;
+
+    const amountThisPeriod = purchaseIndex === numberOfPurchases - 1
+      ? totalAmount - totalInvested
+      : investmentPerPeriod;
+
+    if (amountThisPeriod <= 0) break;
+
+    const sharesBought = amountThisPeriod / q.close;
+    totalShares += sharesBought;
+    totalInvested += amountThisPeriod;
+
+    const marketValue = totalShares * q.close;
+
+    purchases.push({
+      date: q.date.toISOString().split("T")[0],
+      price: +q.close.toFixed(2),
+      invested: +amountThisPeriod.toFixed(2),
+      sharesBought: +sharesBought.toFixed(4),
+      totalShares: +totalShares.toFixed(4),
+      totalInvested: +totalInvested.toFixed(2),
+      marketValue: +marketValue.toFixed(2),
+      gainLoss: +(marketValue - totalInvested).toFixed(2),
+      gainLossPercent: +((marketValue - totalInvested) / totalInvested * 100).toFixed(2),
+    });
+
+    purchaseIndex++;
+    nextPurchaseDate = new Date(q.date.getTime() + periodDays * 24 * 60 * 60 * 1000);
+  }
+
+  const finalPrice = currentPrice > 0 ? currentPrice : quotes[quotes.length - 1].close;
+  const currentValue = totalShares * finalPrice;
+  const avgCostBasis = totalInvested > 0 ? totalInvested / totalShares : 0;
+  const lumpSumCurrentValue = lumpSumShares * finalPrice;
+
+  return {
+    symbol: upper,
+    name,
+    currentPrice: finalPrice,
+    totalAmount,
+    months,
+    frequency,
+    investmentPerPeriod,
+    numberOfPurchases: purchases.length,
+    purchases,
+    summary: {
+      totalInvested: +totalInvested.toFixed(2),
+      totalShares: +totalShares.toFixed(4),
+      avgCostBasis: +avgCostBasis.toFixed(2),
+      currentValue: +currentValue.toFixed(2),
+      totalReturn: +(currentValue - totalInvested).toFixed(2),
+      totalReturnPercent: +((currentValue - totalInvested) / totalInvested * 100).toFixed(2),
+      lumpSumShares: +lumpSumShares.toFixed(4),
+      lumpSumValue: +lumpSumCurrentValue.toFixed(2),
+      lumpSumReturn: +(lumpSumCurrentValue - totalAmount).toFixed(2),
+      lumpSumReturnPercent: +((lumpSumCurrentValue - totalAmount) / totalAmount * 100).toFixed(2),
+    },
+  };
+}
 /* eslint-enable @typescript-eslint/no-explicit-any */
