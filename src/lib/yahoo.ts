@@ -728,6 +728,145 @@ export async function fetchMarketNews(count = 30): Promise<NewsArticle[]> {
   return trimmed;
 }
 
+/* ─── Multi-Symbol Comparison ─── */
+
+export type CompareRange = "1m" | "3m" | "6m" | "1y" | "2y" | "5y";
+
+export interface CompareSymbolSeries {
+  symbol: string;
+  name: string;
+  currentPrice: number;
+  firstPrice: number;
+  returnPercent: number;
+}
+
+export interface CompareChartPoint {
+  date: string;
+  [symbol: string]: string | number | null;
+}
+
+export interface CompareResult {
+  symbols: CompareSymbolSeries[];
+  priceSeries: CompareChartPoint[];
+  normalizedSeries: CompareChartPoint[];
+  range: CompareRange;
+}
+
+function rangeToDays(range: CompareRange): number {
+  switch (range) {
+    case "1m":
+      return 31;
+    case "3m":
+      return 93;
+    case "6m":
+      return 186;
+    case "1y":
+      return 365;
+    case "2y":
+      return 730;
+    case "5y":
+      return 1825;
+    default:
+      return 365;
+  }
+}
+
+export async function fetchComparison(
+  symbolsInput: string[],
+  range: CompareRange = "1y"
+): Promise<CompareResult | null> {
+  const symbols = Array.from(
+    new Set(
+      symbolsInput
+        .map((s) => s.trim().toUpperCase())
+        .filter(Boolean)
+    )
+  ).slice(0, 8);
+
+  if (symbols.length < 2) return null;
+
+  const cacheKey = `yahoo:compare:${range}:${symbols.join(",")}`;
+  const cached = cacheGet<CompareResult>(cacheKey);
+  if (cached) return cached;
+
+  const days = rangeToDays(range);
+  const period1 = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  const period2 = new Date().toISOString().split("T")[0];
+
+  const [rawQuotes, charts] = await Promise.all([
+    yf.quote(symbols, {}, { validateResult: false }) as Promise<any>,
+    Promise.all(
+      symbols.map((symbol) =>
+        yf
+          .chart(symbol, { period1, period2, interval: "1d" })
+          .catch(() => null)
+      )
+    ),
+  ]);
+
+  const quoteList: Record<string, any>[] = Array.isArray(rawQuotes) ? rawQuotes : [rawQuotes];
+  const quoteMap = new Map(quoteList.map((q) => [String(q.symbol ?? "").toUpperCase(), q]));
+
+  const dateMap = new Map<string, CompareChartPoint>();
+  const normalizedDateMap = new Map<string, CompareChartPoint>();
+  const symbolSeries: CompareSymbolSeries[] = [];
+
+  symbols.forEach((symbol, idx) => {
+    const chart = charts[idx] as any;
+    const quote = quoteMap.get(symbol) ?? {};
+    const chartQuotes = ((chart?.quotes ?? []) as any[])
+      .filter((q) => q?.close && Number(q.close) > 0)
+      .map((q) => ({
+        date:
+          q.date instanceof Date
+            ? q.date.toISOString().split("T")[0]
+            : String(q.date).split("T")[0],
+        close: Number(q.close),
+      }));
+
+    if (chartQuotes.length < 2) return;
+
+    const firstPrice = chartQuotes[0].close;
+    const currentPrice = safeNum(quote.regularMarketPrice, chartQuotes[chartQuotes.length - 1].close);
+    const name = String(quote.longName ?? quote.shortName ?? symbol);
+    const returnPercent = firstPrice > 0 ? +(((currentPrice - firstPrice) / firstPrice) * 100).toFixed(2) : 0;
+
+    symbolSeries.push({
+      symbol,
+      name,
+      currentPrice: +currentPrice.toFixed(2),
+      firstPrice: +firstPrice.toFixed(2),
+      returnPercent,
+    });
+
+    for (const p of chartQuotes) {
+      if (!dateMap.has(p.date)) dateMap.set(p.date, { date: p.date });
+      if (!normalizedDateMap.has(p.date)) normalizedDateMap.set(p.date, { date: p.date });
+      dateMap.get(p.date)![symbol] = +p.close.toFixed(2);
+      normalizedDateMap.get(p.date)![symbol] = +((p.close / firstPrice) * 100).toFixed(2);
+    }
+  });
+
+  if (symbolSeries.length < 2) return null;
+
+  const priceSeries = Array.from(dateMap.values()).sort((a, b) =>
+    String(a.date).localeCompare(String(b.date))
+  );
+  const normalizedSeries = Array.from(normalizedDateMap.values()).sort((a, b) =>
+    String(a.date).localeCompare(String(b.date))
+  );
+
+  const result: CompareResult = {
+    symbols: symbolSeries,
+    priceSeries,
+    normalizedSeries,
+    range,
+  };
+
+  cacheSet(cacheKey, result, TTL.QUOTES);
+  return result;
+}
+
 /* ─── Max Pain Calculator ─── */
 
 export interface MaxPainStrike {
