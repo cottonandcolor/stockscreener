@@ -7,6 +7,7 @@ import DashboardInsiderBuys from "@/components/DashboardInsiderBuys";
 import BuySignalScanner from "@/components/BuySignalScanner";
 import SellSignalScanner from "@/components/SellSignalScanner";
 import ETFFlows from "@/components/ETFFlows";
+import ETFSignals from "@/components/ETFSignals";
 import MarketBreadth from "@/components/MarketBreadth";
 import type { BreadthData } from "@/components/MarketBreadth";
 import Link from "next/link";
@@ -144,6 +145,11 @@ export default async function DashboardPage() {
       {/* ETF Fund Flows */}
       <div className="mb-8">
         <ETFFlows />
+      </div>
+
+      {/* ETF Buy & Sell Signals */}
+      <div className="mb-8">
+        <ETFSignals />
       </div>
 
       {/* Top 10 Insider Buys — Stocks Under $10 */}

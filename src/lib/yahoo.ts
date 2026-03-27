@@ -8,30 +8,52 @@ const SYMBOLS = STOCK_DEFS.map((d) => d.symbol);
 const DEF_MAP = new Map(STOCK_DEFS.map((d) => [d.symbol, d]));
 
 const ETF_DEFS: { symbol: string; name: string; category: string }[] = [
-  { symbol: "SPY", name: "S&P 500 ETF", category: "US Large Cap" },
-  { symbol: "QQQ", name: "Nasdaq 100 ETF", category: "US Tech" },
-  { symbol: "IWM", name: "Russell 2000 ETF", category: "US Small Cap" },
-  { symbol: "DIA", name: "Dow Jones ETF", category: "US Large Cap" },
-  { symbol: "VTI", name: "Total Stock Market", category: "US Broad" },
+  // Major Index ETFs
+  { symbol: "SPY", name: "S&P 500 ETF", category: "Major Index" },
+  { symbol: "QQQ", name: "Nasdaq 100 ETF", category: "Major Index" },
+  { symbol: "DIA", name: "Dow Jones ETF", category: "Major Index" },
+  { symbol: "IWM", name: "Russell 2000 ETF", category: "Major Index" },
+  { symbol: "VTI", name: "Total Stock Market", category: "Major Index" },
+  { symbol: "VOO", name: "Vanguard S&P 500", category: "Major Index" },
+  { symbol: "RSP", name: "Equal Weight S&P 500", category: "Major Index" },
+  { symbol: "MDY", name: "S&P MidCap 400", category: "Major Index" },
+  // Style
+  { symbol: "VUG", name: "Vanguard Growth", category: "Style" },
+  { symbol: "VTV", name: "Vanguard Value", category: "Style" },
+  { symbol: "SCHD", name: "Schwab Dividend", category: "Style" },
+  // International
   { symbol: "EFA", name: "Intl Developed ETF", category: "International" },
-  { symbol: "EEM", name: "Emerging Markets ETF", category: "Emerging Markets" },
-  { symbol: "VWO", name: "Vanguard EM ETF", category: "Emerging Markets" },
+  { symbol: "EEM", name: "Emerging Markets ETF", category: "International" },
+  { symbol: "VWO", name: "Vanguard EM ETF", category: "International" },
+  { symbol: "KWEB", name: "China Internet ETF", category: "International" },
+  { symbol: "FXI", name: "China Large-Cap ETF", category: "International" },
+  // Bonds
   { symbol: "TLT", name: "20+ Year Treasury", category: "Bonds" },
   { symbol: "BND", name: "Total Bond Market", category: "Bonds" },
   { symbol: "HYG", name: "High Yield Corporate", category: "Bonds" },
   { symbol: "LQD", name: "Investment Grade Corp", category: "Bonds" },
+  // Commodities
   { symbol: "GLD", name: "Gold ETF", category: "Commodities" },
   { symbol: "SLV", name: "Silver ETF", category: "Commodities" },
   { symbol: "USO", name: "Oil ETF", category: "Commodities" },
+  // Sector SPDRs (complete set)
   { symbol: "XLK", name: "Technology Select", category: "Sector" },
   { symbol: "XLF", name: "Financial Select", category: "Sector" },
   { symbol: "XLE", name: "Energy Select", category: "Sector" },
   { symbol: "XLV", name: "Healthcare Select", category: "Sector" },
+  { symbol: "XLI", name: "Industrials Select", category: "Sector" },
+  { symbol: "XLP", name: "Consumer Staples", category: "Sector" },
+  { symbol: "XLY", name: "Consumer Discretionary", category: "Sector" },
+  { symbol: "XLC", name: "Communication Svc", category: "Sector" },
+  { symbol: "XLB", name: "Materials Select", category: "Sector" },
+  { symbol: "XLU", name: "Utilities Select", category: "Sector" },
   { symbol: "XLRE", name: "Real Estate Select", category: "Sector" },
-  { symbol: "XBI", name: "Biotech ETF", category: "Sector" },
+  // Thematic / Specialty
+  { symbol: "XBI", name: "Biotech ETF", category: "Thematic" },
+  { symbol: "SOXX", name: "Semiconductor ETF", category: "Thematic" },
   { symbol: "ARKK", name: "ARK Innovation ETF", category: "Thematic" },
-  { symbol: "SOXX", name: "Semiconductor ETF", category: "Sector" },
-  { symbol: "VNQ", name: "Real Estate ETF", category: "Real Estate" },
+  { symbol: "VNQ", name: "Real Estate ETF", category: "Thematic" },
+  { symbol: "SMH", name: "VanEck Semiconductor", category: "Thematic" },
 ];
 
 function safeNum(val: unknown, fallback = 0): number {
@@ -179,11 +201,12 @@ export async function fetchStockDetail(symbol: string): Promise<StockDetail | nu
   return detail;
 }
 
-/* ─── Buy Signal Scanner ─── */
+/* ─── Signal Detection Helpers ─── */
 
-export interface BuySignal {
+export interface SignalResult {
   symbol: string;
   name: string;
+  category?: string;
   price: number;
   change: number;
   changePercent: number;
@@ -195,8 +218,77 @@ export interface BuySignal {
   high52: number;
   low52: number;
   signals: string[];
-  strength: number; // 0-5 composite score
+  strength: number;
 }
+
+export type BuySignal = SignalResult;
+export type SellSignal = SignalResult;
+
+interface QuoteFields {
+  price: number; ma50: number; ma200: number; vol: number; avgVol: number;
+  chg: number; chgPct: number; h52: number; l52: number; mktCap: number;
+}
+
+function extractQuoteFields(q: Record<string, any>): QuoteFields {
+  return {
+    price: safeNum(q.regularMarketPrice),
+    ma50: safeNum(q.fiftyDayAverage),
+    ma200: safeNum(q.twoHundredDayAverage),
+    vol: safeNum(q.regularMarketVolume),
+    avgVol: safeNum(q.averageDailyVolume3Month),
+    chg: safeNum(q.regularMarketChange),
+    chgPct: safeNum(q.regularMarketChangePercent),
+    h52: safeNum(q.fiftyTwoWeekHigh),
+    l52: safeNum(q.fiftyTwoWeekLow),
+    mktCap: safeNum(q.marketCap),
+  };
+}
+
+function detectBuySignals(f: QuoteFields): string[] {
+  const sigs: string[] = [];
+  if (f.ma50 > 0 && f.ma200 > 0 && f.price > f.ma50 && f.ma50 > f.ma200) sigs.push("Golden Cross");
+  if (f.ma50 > 0 && f.price > f.ma50 && f.chg > 0) sigs.push("Above 50-Day MA");
+  if (f.ma200 > 0 && f.price > f.ma200 && f.chg > 0) sigs.push("Above 200-Day MA");
+  if (f.avgVol > 0 && f.vol > f.avgVol * 1.5 && f.chg > 0) sigs.push("Volume Surge");
+  if (f.l52 > 0 && f.price <= f.l52 * 1.1 && f.chg > 0) sigs.push("52W Low Bounce");
+  if (f.h52 > 0 && f.price >= f.h52 * 0.97) sigs.push("Near 52W High");
+  return sigs;
+}
+
+function detectSellSignals(f: QuoteFields): string[] {
+  const sigs: string[] = [];
+  if (f.ma50 > 0 && f.ma200 > 0 && f.price < f.ma50 && f.ma50 < f.ma200) sigs.push("Death Cross");
+  if (f.ma50 > 0 && f.price < f.ma50 && f.chg < 0) sigs.push("Below 50-Day MA");
+  if (f.ma200 > 0 && f.price < f.ma200 && f.chg < 0) sigs.push("Below 200-Day MA");
+  if (f.avgVol > 0 && f.vol > f.avgVol * 1.5 && f.chg < 0) sigs.push("Heavy Selloff");
+  if (f.l52 > 0 && f.price <= f.l52 * 1.05) sigs.push("Near 52W Low");
+  if (f.h52 > 0 && f.price <= f.h52 * 0.8) sigs.push("Down 20%+ from High");
+  return sigs;
+}
+
+function buildSignalResult(
+  q: Record<string, any>, f: QuoteFields, name: string, signals: string[], category?: string,
+): SignalResult {
+  return {
+    symbol: String(q.symbol ?? ""),
+    name,
+    category,
+    price: f.price,
+    change: f.chg,
+    changePercent: f.chgPct,
+    marketCap: f.mktCap,
+    volume: f.vol,
+    avgVolume: f.avgVol,
+    ma50: f.ma50,
+    ma200: f.ma200,
+    high52: f.h52,
+    low52: f.l52,
+    signals,
+    strength: signals.length,
+  };
+}
+
+/* ─── Stock Buy Signal Scanner ─── */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export async function fetchBuySignals(): Promise<BuySignal[]> {
@@ -206,81 +298,25 @@ export async function fetchBuySignals(): Promise<BuySignal[]> {
 
   const raw = await yf.quote(SYMBOLS, {}, { validateResult: false });
   const quotes = (Array.isArray(raw) ? raw : [raw]) as Record<string, any>[];
-
   const results: BuySignal[] = [];
 
   for (const q of quotes) {
     const sym = String(q.symbol ?? "");
     const def = DEF_MAP.get(sym);
     if (!def) continue;
-
-    const price = safeNum(q.regularMarketPrice);
-    const ma50 = safeNum(q.fiftyDayAverage);
-    const ma200 = safeNum(q.twoHundredDayAverage);
-    const vol = safeNum(q.regularMarketVolume);
-    const avgVol = safeNum(q.averageDailyVolume3Month);
-    const chg = safeNum(q.regularMarketChange);
-    const chgPct = safeNum(q.regularMarketChangePercent);
-    const h52 = safeNum(q.fiftyTwoWeekHigh);
-    const l52 = safeNum(q.fiftyTwoWeekLow);
-
-    if (price <= 0) continue;
-
-    const signals: string[] = [];
-
-    if (ma50 > 0 && ma200 > 0 && price > ma50 && ma50 > ma200) {
-      signals.push("Golden Cross");
-    }
-
-    if (ma50 > 0 && price > ma50 && chg > 0) {
-      signals.push("Above 50-Day MA");
-    }
-
-    if (ma200 > 0 && price > ma200 && chg > 0) {
-      signals.push("Above 200-Day MA");
-    }
-
-    if (avgVol > 0 && vol > avgVol * 1.5 && chg > 0) {
-      signals.push("Volume Surge");
-    }
-
-    if (l52 > 0 && price <= l52 * 1.1 && chg > 0) {
-      signals.push("52W Low Bounce");
-    }
-
-    if (h52 > 0 && price >= h52 * 0.97) {
-      signals.push("Near 52W High");
-    }
-
+    const f = extractQuoteFields(q);
+    if (f.price <= 0) continue;
+    const signals = detectBuySignals(f);
     if (signals.length === 0) continue;
-
-    results.push({
-      symbol: sym,
-      name: String(q.longName ?? q.shortName ?? def.name),
-      price,
-      change: chg,
-      changePercent: chgPct,
-      marketCap: safeNum(q.marketCap),
-      volume: vol,
-      avgVolume: avgVol,
-      ma50,
-      ma200,
-      high52: h52,
-      low52: l52,
-      signals,
-      strength: signals.length,
-    });
+    results.push(buildSignalResult(q, f, String(q.longName ?? q.shortName ?? def.name), signals));
   }
 
   results.sort((a, b) => b.strength - a.strength || b.changePercent - a.changePercent);
-
   cacheSet(cacheKey, results, TTL.QUOTES);
   return results;
 }
 
-/* ─── Sell Signal Scanner ─── */
-
-export type SellSignal = BuySignal; // same shape, different signal names
+/* ─── Stock Sell Signal Scanner ─── */
 
 export async function fetchSellSignals(): Promise<SellSignal[]> {
   const cacheKey = "yahoo:sell-signals";
@@ -289,74 +325,78 @@ export async function fetchSellSignals(): Promise<SellSignal[]> {
 
   const raw = await yf.quote(SYMBOLS, {}, { validateResult: false });
   const quotes = (Array.isArray(raw) ? raw : [raw]) as Record<string, any>[];
-
   const results: SellSignal[] = [];
 
   for (const q of quotes) {
     const sym = String(q.symbol ?? "");
     const def = DEF_MAP.get(sym);
     if (!def) continue;
-
-    const price = safeNum(q.regularMarketPrice);
-    const ma50 = safeNum(q.fiftyDayAverage);
-    const ma200 = safeNum(q.twoHundredDayAverage);
-    const vol = safeNum(q.regularMarketVolume);
-    const avgVol = safeNum(q.averageDailyVolume3Month);
-    const chg = safeNum(q.regularMarketChange);
-    const chgPct = safeNum(q.regularMarketChangePercent);
-    const h52 = safeNum(q.fiftyTwoWeekHigh);
-    const l52 = safeNum(q.fiftyTwoWeekLow);
-
-    if (price <= 0) continue;
-
-    const signals: string[] = [];
-
-    if (ma50 > 0 && ma200 > 0 && price < ma50 && ma50 < ma200) {
-      signals.push("Death Cross");
-    }
-
-    if (ma50 > 0 && price < ma50 && chg < 0) {
-      signals.push("Below 50-Day MA");
-    }
-
-    if (ma200 > 0 && price < ma200 && chg < 0) {
-      signals.push("Below 200-Day MA");
-    }
-
-    if (avgVol > 0 && vol > avgVol * 1.5 && chg < 0) {
-      signals.push("Heavy Selloff");
-    }
-
-    if (l52 > 0 && price <= l52 * 1.05) {
-      signals.push("Near 52W Low");
-    }
-
-    if (h52 > 0 && price <= h52 * 0.8) {
-      signals.push("Down 20%+ from High");
-    }
-
+    const f = extractQuoteFields(q);
+    if (f.price <= 0) continue;
+    const signals = detectSellSignals(f);
     if (signals.length === 0) continue;
-
-    results.push({
-      symbol: sym,
-      name: String(q.longName ?? q.shortName ?? def.name),
-      price,
-      change: chg,
-      changePercent: chgPct,
-      marketCap: safeNum(q.marketCap),
-      volume: vol,
-      avgVolume: avgVol,
-      ma50,
-      ma200,
-      high52: h52,
-      low52: l52,
-      signals,
-      strength: signals.length,
-    });
+    results.push(buildSignalResult(q, f, String(q.longName ?? q.shortName ?? def.name), signals));
   }
 
   results.sort((a, b) => b.strength - a.strength || a.changePercent - b.changePercent);
+  cacheSet(cacheKey, results, TTL.QUOTES);
+  return results;
+}
 
+/* ─── ETF Buy Signal Scanner ─── */
+
+const ETF_MAP = new Map(ETF_DEFS.map((e) => [e.symbol, e]));
+
+export async function fetchETFBuySignals(): Promise<SignalResult[]> {
+  const cacheKey = "yahoo:etf-buy-signals";
+  const cached = cacheGet<SignalResult[]>(cacheKey);
+  if (cached) return cached;
+
+  const etfSymbols = ETF_DEFS.map((e) => e.symbol);
+  const raw = await yf.quote(etfSymbols, {}, { validateResult: false });
+  const quotes = (Array.isArray(raw) ? raw : [raw]) as Record<string, any>[];
+  const results: SignalResult[] = [];
+
+  for (const q of quotes) {
+    const sym = String(q.symbol ?? "");
+    const def = ETF_MAP.get(sym);
+    if (!def) continue;
+    const f = extractQuoteFields(q);
+    if (f.price <= 0) continue;
+    const signals = detectBuySignals(f);
+    if (signals.length === 0) continue;
+    results.push(buildSignalResult(q, f, def.name, signals, def.category));
+  }
+
+  results.sort((a, b) => b.strength - a.strength || b.changePercent - a.changePercent);
+  cacheSet(cacheKey, results, TTL.QUOTES);
+  return results;
+}
+
+/* ─── ETF Sell Signal Scanner ─── */
+
+export async function fetchETFSellSignals(): Promise<SignalResult[]> {
+  const cacheKey = "yahoo:etf-sell-signals";
+  const cached = cacheGet<SignalResult[]>(cacheKey);
+  if (cached) return cached;
+
+  const etfSymbols = ETF_DEFS.map((e) => e.symbol);
+  const raw = await yf.quote(etfSymbols, {}, { validateResult: false });
+  const quotes = (Array.isArray(raw) ? raw : [raw]) as Record<string, any>[];
+  const results: SignalResult[] = [];
+
+  for (const q of quotes) {
+    const sym = String(q.symbol ?? "");
+    const def = ETF_MAP.get(sym);
+    if (!def) continue;
+    const f = extractQuoteFields(q);
+    if (f.price <= 0) continue;
+    const signals = detectSellSignals(f);
+    if (signals.length === 0) continue;
+    results.push(buildSignalResult(q, f, def.name, signals, def.category));
+  }
+
+  results.sort((a, b) => b.strength - a.strength || a.changePercent - b.changePercent);
   cacheSet(cacheKey, results, TTL.QUOTES);
   return results;
 }
